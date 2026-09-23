@@ -1,0 +1,18 @@
+[Unit]
+Description=svcwatch - service watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/svcwatch/venv/bin/python -m svcwatch run --config /etc/svcwatch/svcwatch.toml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=svcwatch
+
+[Install]
+WantedBy=multi-user.target

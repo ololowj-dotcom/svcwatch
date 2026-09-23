@@ -1,0 +1,117 @@
+# A realistic, fully worked configuration. Copy it, then trim what you don't need.
+# Secrets are read from the .env file next to this file (or the process environment).
+
+[monitor]
+interval = 20                   # check every 20 seconds
+dedup_window = 1800             # the same error at most once per 30 minutes
+remind_after = 21600            # while something stays down, remind every 6 hours
+summary_interval = 86400        # daily summary / heartbeat
+state_file = "/var/lib/svcwatch/state.json"
+
+# ---------------------------------------------------------------------------
+# systemd: watch the services I deployed myself, plus a few system ones.
+# ---------------------------------------------------------------------------
+[systemd]
+discover = "custom"             # units in /etc/systemd/system
+exclude = ["svcwatch", "getty@*", "systemd-*", "backup-*"]
+units = ["nginx", "postgresql"] # always watch these too
+
+# Business-critical service: nicer name, stricter rules, goes to the on-call channel.
+[[systemd.watch]]
+match = "payments"
+label = "Payments API"
+alert_on = ["failed", "inactive"]           # also alert if someone stopped it
+immediate_extra = ["ERROR", "re:timeout after \\d+s"]
+ignore_extra = ["health check passed"]
+fail_threshold = 1
+notify = ["oncall"]
+
+# All workers: a flapping worker is a warning, not a page.
+[[systemd.watch]]
+match = "worker-*"
+restart_alert = true
+notify = ["team"]
+
+# Nightly job: its state matters, its chatty log does not.
+[[systemd.watch]]
+match = "nightly-report"
+logs = false
+
+# ---------------------------------------------------------------------------
+# Docker
+# ---------------------------------------------------------------------------
+[docker]
+enabled = true
+exclude = ["watchtower"]
+
+[[docker.watch]]
+match = "web"
+label = "Public website (container)"
+alert_on = ["failed", "inactive"]
+
+# ---------------------------------------------------------------------------
+# Log patterns (case-insensitive substrings; "re:" = regular expression)
+# ---------------------------------------------------------------------------
+[logs]
+immediate = ["CRITICAL", "Traceback", "Exception", "FATAL", "panic:"]
+external = ["Bad Gateway", "Gateway Timeout", "Connection reset by peer"]   # counted, sent in the daily summary
+ignore = ["DeprecationWarning"]
+context_lines = 6               # how many lines after a match belong to the same alert
+max_lines_per_alert = 25
+
+# ---------------------------------------------------------------------------
+# Active checks
+# ---------------------------------------------------------------------------
+[[http]]
+name = "site"
+label = "Website"
+url = "https://example.com/health"
+expect_status = 200
+contains = "ok"
+fail_threshold = 3              # three failed checks in a row
+every = 60                      # once a minute is plenty for an external URL
+notify = ["oncall"]
+
+[[tcp]]
+name = "postgres"
+label = "PostgreSQL port"
+host = "127.0.0.1"
+port = 5432
+
+[[process]]
+name = "queue-worker"
+label = "Queue worker process"
+pattern = "python -m app.worker"   # matched against the full command line
+min_count = 2                      # we expect two of them
+
+# ---------------------------------------------------------------------------
+# Where alerts go
+# ---------------------------------------------------------------------------
+[notify]
+console = true
+
+[[notify.telegram]]
+name = "oncall"
+bot_token = "${TELEGRAM_BOT_TOKEN}"
+chat_id = "${ONCALL_CHAT_ID}"
+commands = true                 # /status, /mute 1h, /unmute work in this chat
+
+[[notify.telegram]]
+name = "team"
+bot_token = "${TELEGRAM_BOT_TOKEN}"
+chat_id = "${TEAM_CHAT_ID}"
+thread_id = 12                  # a topic in a forum-style group
+min_severity = "warning"        # info | warning | critical
+
+[notify.email]
+enabled = false                 # flip to true and fill in SMTP_PASSWORD in .env
+host = "smtp.example.com"
+port = 587
+user = "alerts@example.com"
+password = "${SMTP_PASSWORD}"
+sender = "alerts@example.com"
+to = ["me@example.com"]
+
+[notify.webhook]
+enabled = false
+url = "${SLACK_WEBHOOK_URL}"
